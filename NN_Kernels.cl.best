@@ -6,6 +6,7 @@
 
 #define NULL 0
 
+__constant float4 zeros = (float4) (0.0f);
 __constant float4 ones = (float4) (1.0f);
 __constant float4 epsilon = (float4) (1E-30);
 
@@ -44,76 +45,27 @@ float4 cross_entropy(float4 t, float4 y)
     return ( t * log(y + epsilon) + (ones - t) * log (ones - y + epsilon) );
 }
 
-/* 
-    returns the mask of a 4 by 4 block in this way:
-      uchar4 return type bits:
-        uchar 0  0000xxxx -> mask of the contiguous 4 elements located in pos 0
-        uchar 1  0000xxxx -> mask of the contiguous 4 elements located in pos 1
-        uchar 2  0000xxxx -> mask of the contiguous 4 elements located in pos 2
-        uchar 3  0000xxxx -> mask of the contiguous 4 elements located in pos 3
- */
-uint4 mask_4by4_block(__global uchar * mask, int4 pos)
+float4 masked_value(float4 value, uchar byte_mask, int nibble)
 {
-    uint4 val = 0x0F;
-    
-    if(mask)    // if mask != nullptr then search mask else return 0x0F 4 times
-    {    
-        // initially pos has the 4bit positioning (index of floats4).
-        // First we find the byte and after that the bit
-      const int4 byte_pos = (pos >> 1); // (pos/2)
-      const int4 bit4_pos = (pos % 2);  // group high or low of 4 bits
-      uint4 val = (uint4) (mask[byte_pos.x], mask[byte_pos.y], mask[byte_pos.z], mask[byte_pos.w]);
-	
-      // Doesn't work: val = (bit4_pos)?(val >> 4):(val & 0x0F);
-      val = (uint4) (
-		      bit4_pos.x?(val.x >> 4):(val.x & 0x0F),
-		      bit4_pos.y?(val.y >> 4):(val.y & 0x0F),
-		      bit4_pos.z?(val.z >> 4):(val.z & 0x0F),
-		      bit4_pos.w?(val.w >> 4):(val.w & 0x0F)
-		     );
-    }
-
-    return val;
-}
-
-/*
-    Mask: 0000xxxx
-    If bit x == 1 then returns the value of the float in that position
-    if not, then returns 0
- */
-
-float4 mask_float4(float4 value_premask, uint mask) 
-{
-    // lower 4 bits of mask define if value_premask is used or has
-    // to be set to 0.0f
-  const uint imask = (uint) mask;
-  const uint4 dec_mask = (uint4) ((imask & 8)?1:0, (imask & 4)?1:0, (imask & 2)?1:0, (imask & 1)?1:0);
-  
-  //Don't know why but this commented line doesn't work: const float4 val = dec_mask?value_premask:0.0f;
-  const float4 val = convert_float4_rtz(dec_mask) * value_premask;
-
-  return val;
-}
-
-/*
-  Returns the mask of four contiguous elements. 
-  pos is the index element of the float4 
-    ( 
-        pos = 0 -> 1st float4 mask, 
-        pos = 1 -> 2nd float4 mask -> 8th float,
-        pos = 2 -> 3rd float4 mask -> 12th float,
-        etc.
- */
-uint mask_val4(__global uchar * mask, int pos)
-{
-    const int byte_pos = pos / 2;
-    const int bit4_pos = pos % 2;
-    
-    uint val = (uint) mask[byte_pos];
-    
-    val = (bit4_pos)?(val >> 4):(val & 0x0F);    
-
-    return val;
+  /*
+    byte_mask saves the mask of 8 elements (one per bit).
+    As the elements are accesed of blocksof 4 elements (float4)
+    we haveto choose between the two nibbles (high 4bitand low 4bit)
+    Attention!!: The high nibble contains the mask of the pair index
+    element (that is to say, the one with the lower index).
+    This has to be taken into account in the tests because the mask
+    order every 2 elements has to be reversed.
+   */
+  const int shift = (nibble << 2);  // nibble = 1 --> shift = 4, nibble = 0 --> shift = 0
+  const uchar nibble_mask = (byte_mask >> shift);
+  const uchar4 decompressed = (uchar4) (
+					((nibble_mask >> 3) & 1), 
+					((nibble_mask >> 2) & 1), 
+					((nibble_mask >> 1) & 1), 
+					(nibble_mask & 1)
+				       );
+  const float4 ret = value * convert_float4_rtz(decompressed);
+  return ret;
 }
 
 /* Matrix A is cached into local memory block */
@@ -126,7 +78,7 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
                               __global float4 *matrixB,
                               __global float4 *matrixC,
                               __global float4 *bias,
-                              const int colsA,
+                              const int colsAfloat4,
                               const int offsetA,
                               const int offsetB,
                               const int offsetC,
@@ -169,7 +121,7 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
     float4 sum2 = (float4)(0);
     float4 sum3 = (float4)(0);
 
-    int temp = colsA / 4;
+    int temp = colsAfloat4;
     
     /* This loop runs for number of blocks of A in horizontal direction */
     for(int i = 0; i < (temp / lsz0); i++)
@@ -184,28 +136,38 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         
         if(!AInColMajorOrder) {
             const int4 globalPosA = get_index(offsetA, (row_A << TILEY_SHIFT), col_A, nr_cols_A, normal_seq);	
-            const uint4 mask = mask_4by4_block(maskA, globalPosA);
+	    uchar4 mask = (uchar4) (0xFF);
+	    const int4 nibble = globalPosA & 1;	    
+	    if(maskA) {
+              const int4 maskIdx = (globalPosA >> 1)*(col_C << TILEY_SHIFT);
+	      mask = (uchar4) (maskA[maskIdx.x], maskA[maskIdx.y], maskA[maskIdx.z], maskA[maskIdx.w]);
+	    } 
             /* Load values in blockA from matrixA */    
-            blockA[blockPos.x] = mask_float4(matrixA[globalPosA.x], mask.x);
-            blockA[blockPos.y] = mask_float4(matrixA[globalPosA.y], mask.y);
-            blockA[blockPos.z] = mask_float4(matrixA[globalPosA.z], mask.z);
-            blockA[blockPos.w] = mask_float4(matrixA[globalPosA.w], mask.w);
+            blockA[blockPos.x] = masked_value(matrixA[globalPosA.x], mask.x, nibble.x);
+            blockA[blockPos.y] = masked_value(matrixA[globalPosA.y], mask.y, nibble.y);
+            blockA[blockPos.z] = masked_value(matrixA[globalPosA.z], mask.z, nibble.z);
+            blockA[blockPos.w] = masked_value(matrixA[globalPosA.w], mask.w, nibble.w);
         } else {
-          // If A is in column major order not only the index calculation is different but the float4xfloat4 block
-          // of data has to be transposed
-          const int4 globalPosA = get_index(offsetA, (col_A << TILEY_SHIFT), row_A, nr_rows_A, normal_seq);
-          const uint4 mask = mask_4by4_block(maskA, globalPosA);
-          // first of all we load the block to private memory
-          float4 v1 = mask_float4(matrixA[globalPosA.x], mask.x);
-          float4 v2 = mask_float4(matrixA[globalPosA.y], mask.y);
-          float4 v3 = mask_float4(matrixA[globalPosA.z], mask.z);
-          float4 v4 = mask_float4(matrixA[globalPosA.w], mask.w);
+            // If A is in column major order not only the index calculation is different but the float4xfloat4 block
+            // of data has to be transposed
+            const int4 globalPosA = get_index(offsetA, (col_A << TILEY_SHIFT), row_A, nr_rows_A, normal_seq);
+	    uchar4 mask = (uchar4) (0xFF);
+	    const int4 nibble = globalPosA & 1;	    
+	    if(maskA) {
+              const int4 maskIdx = (globalPosA >> 1)*(col_C << TILEY_SHIFT);
+	      mask = (uchar4) (maskA[maskIdx.x], maskA[maskIdx.y], maskA[maskIdx.z], maskA[maskIdx.w]);
+	    }
+            // first of all we load the block to private memory
+            float4 v1 = masked_value(matrixA[globalPosA.x], mask.x, nibble.x);
+            float4 v2 = masked_value(matrixA[globalPosA.y], mask.y, nibble.y);
+            float4 v3 = masked_value(matrixA[globalPosA.z], mask.z, nibble.z);
+            float4 v4 = masked_value(matrixA[globalPosA.w], mask.w, nibble.w);
 
-          // now we transpose it and assign it to the block of memory
-          blockA[blockPos.x] = (float4) (v1.x, v2.x, v3.x, v4.x);
-          blockA[blockPos.y] = (float4) (v1.y, v2.y, v3.y, v4.y);
-          blockA[blockPos.z] = (float4) (v1.z, v2.z, v3.z, v4.z);
-          blockA[blockPos.w] = (float4) (v1.w, v2.w, v3.w, v4.w);
+            // now we transpose it and assign it to the block of memory
+            blockA[blockPos.x] = (float4) (v1.x, v2.x, v3.x, v4.x);
+            blockA[blockPos.y] = (float4) (v1.y, v2.y, v3.y, v4.y);
+            blockA[blockPos.z] = (float4) (v1.z, v2.z, v3.z, v4.z);
+            blockA[blockPos.w] = (float4) (v1.w, v2.w, v3.w, v4.w);
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -232,19 +194,30 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
 
             if(!BInColMajorOrder) {
               const int4 globalPosB = get_index(offsetB, (row_B << TILEY_SHIFT) + j, col_B, nr_cols_B, normal_seq);
-              const uint4 mask = mask_4by4_block(maskB, globalPosB);
-              tempB0 = mask_float4(matrixB[globalPosB.x], mask.x);
-              tempB1 = mask_float4(matrixB[globalPosB.y], mask.y);
-              tempB2 = mask_float4(matrixB[globalPosB.z], mask.z);
-              tempB3 = mask_float4(matrixB[globalPosB.w], mask.w);
+  	      uchar4 mask = (uchar4) (0xFF);
+   	      const int4 nibble = globalPosB & 1;
+	      if(maskB) {
+                const int4 maskIdx = (globalPosB >> 1)*(row_C << TILEY_SHIFT);
+	        mask = (uchar4) (maskB[maskIdx.x], maskB[maskIdx.y], maskB[maskIdx.z], maskB[maskIdx.w]);
+	      }
+              tempB0 = masked_value(matrixB[globalPosB.x], mask.x, nibble.x);
+              tempB1 = masked_value(matrixB[globalPosB.y], mask.y, nibble.y);
+              tempB2 = masked_value(matrixB[globalPosB.z], mask.z, nibble.z);
+              tempB3 = masked_value(matrixB[globalPosB.w], mask.w, nibble.w);
             } else {
               const int4 globalPosB = get_index(offsetB, (col_B << TILEY_SHIFT), row_B + (j >> 2), nr_rows_B, normal_seq);
-              const uint4 mask = mask_4by4_block(maskB, globalPosB);
+	      uchar4 mask = (uchar4) (0xFF);
+   	      const int4 nibble = globalPosB & 1;
+	      if(maskB) {
+                const int4 maskIdx = (globalPosB >> 1)*(row_C << TILEY_SHIFT);
+	        mask = (uchar4) (maskB[maskIdx.x], maskB[maskIdx.y], maskB[maskIdx.z], maskB[maskIdx.w]);
+	      }
+
               // load block in private memory
-              float4 v1 = mask_float4(matrixB[globalPosB.x], mask.x);
-              float4 v2 = mask_float4(matrixB[globalPosB.y], mask.y);
-              float4 v3 = mask_float4(matrixB[globalPosB.z], mask.z);
-              float4 v4 = mask_float4(matrixB[globalPosB.w], mask.w);
+              float4 v1 = masked_value(matrixB[globalPosB.x], mask.x, nibble.x);
+              float4 v2 = masked_value(matrixB[globalPosB.y], mask.y, nibble.y);
+              float4 v3 = masked_value(matrixB[globalPosB.z], mask.z, nibble.z);
+              float4 v4 = masked_value(matrixB[globalPosB.w], mask.w, nibble.w);
 
               // now we transpose it
               tempB0 = (float4) (v1.x, v2.x, v3.x, v4.x);
@@ -279,10 +252,14 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
     
     // If bias not NULL
     if(bias != NULL) {
-        float4 bias_val = bias[offsetBias + gid0];
+        const int idx = offsetBias + gid0;
+	const int maskIdx = idx >> 1;
+	const int nibble = idx & 1;
+        float4 bias_val = bias[idx];
+	const uchar mask = maskBias[maskIdx];
         
         if (maskBias)
-            bias_val = mask_float4(bias_val, mask_val4(maskBias, offsetBias + gid0));
+	  bias_val = masked_value(bias_val, mask, nibble);
             
         sum0 += bias_val;
         sum1 += bias_val;
@@ -305,8 +282,16 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         sum3 = sigmoid(sum3);
     }
     // end of calculation of sigmoid function
-    
-    const uint4 mask = mask_4by4_block(maskC, globalPos);
+
+    const int4 maskIdx = globalPos >> 1;
+    const int4 nibble = globalPos & 1;
+    uchar4 mask;
+    if(maskC) {
+      mask = (uchar4) (maskC[maskIdx.x], maskC[maskIdx.y], maskC[maskIdx.z], maskC[maskIdx.w]);
+    } else {
+      mask = (uchar4) (0xFF);
+    }
+
     /* Write 16 values to matrixC */
     if(sumToMatrixC) {
         const float4 a = matrixC[globalPos.x] * multPrevVal;
@@ -314,15 +299,15 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         const float4 c = matrixC[globalPos.z] * multPrevVal;
         const float4 d = matrixC[globalPos.w] * multPrevVal;  
 
-        matrixC[globalPos.x] =  mask_float4(a + multSum*sum0, mask.x);
-        matrixC[globalPos.y] =  mask_float4(b + multSum*sum1, mask.y);
-        matrixC[globalPos.z] =  mask_float4(c + multSum*sum2, mask.z);
-        matrixC[globalPos.w] =  mask_float4(d + multSum*sum3, mask.w);    
+        matrixC[globalPos.x] =  masked_value(a + multSum*sum0, mask.x, nibble.x);
+        matrixC[globalPos.y] =  masked_value(b + multSum*sum1, mask.y, nibble.y);
+        matrixC[globalPos.z] =  masked_value(c + multSum*sum2, mask.z, nibble.z);
+        matrixC[globalPos.w] =  masked_value(d + multSum*sum3, mask.w, nibble.w);    
     } else {
-        matrixC[globalPos.x] =  mask_float4(sum0, mask.x);
-        matrixC[globalPos.y] =  mask_float4(sum1, mask.y);
-        matrixC[globalPos.z] =  mask_float4(sum2, mask.z);
-        matrixC[globalPos.w] =  mask_float4(sum3, mask.w);
+       matrixC[globalPos.x] =  masked_value(sum0, mask.x, nibble.x);
+       matrixC[globalPos.y] =  masked_value(sum1, mask.y, nibble.y);
+       matrixC[globalPos.z] =  masked_value(sum2, mask.z, nibble.z);
+       matrixC[globalPos.w] =  masked_value(sum3, mask.w, nibble.w);
     }
 }
 

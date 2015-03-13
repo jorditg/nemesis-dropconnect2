@@ -78,7 +78,7 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
                               __global float4 *matrixB,
                               __global float4 *matrixC,
                               __global float4 *bias,
-                              const int colsA,
+                              const int colsAfloat4,
                               const int offsetA,
                               const int offsetB,
                               const int offsetC,
@@ -93,7 +93,6 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
                               const float multSum,
                               __global uchar *maskA,
                               __global uchar *maskB,
-                              __global uchar *maskC,
                               __global uchar *maskBias)
 {
     const int gid0 = get_global_id(0);
@@ -121,7 +120,7 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
     float4 sum2 = (float4)(0);
     float4 sum3 = (float4)(0);
 
-    int temp = colsA / 4;
+    int temp = colsAfloat4;
     
     /* This loop runs for number of blocks of A in horizontal direction */
     for(int i = 0; i < (temp / lsz0); i++)
@@ -136,14 +135,12 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         
         if(!AInColMajorOrder) {
             const int4 globalPosA = get_index(offsetA, (row_A << TILEY_SHIFT), col_A, nr_cols_A, normal_seq);	
-            const int4 maskIdx = globalPosA >> 1;
-	    const int4 nibble = globalPosA & 1;
-	    uchar4 mask;
+	    uchar4 mask = (uchar4) (0xFF);
+	    const int4 nibble = globalPosA & 1;	    
 	    if(maskA) {
+              const int4 maskIdx = (globalPosA >> 1)*(col_C << TILEY_SHIFT);
 	      mask = (uchar4) (maskA[maskIdx.x], maskA[maskIdx.y], maskA[maskIdx.z], maskA[maskIdx.w]);
-	    } else {
-	      mask = (uchar4) (0xFF);
-	    }
+	    } 
             /* Load values in blockA from matrixA */    
             blockA[blockPos.x] = masked_value(matrixA[globalPosA.x], mask.x, nibble.x);
             blockA[blockPos.y] = masked_value(matrixA[globalPosA.y], mask.y, nibble.y);
@@ -153,13 +150,11 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
             // If A is in column major order not only the index calculation is different but the float4xfloat4 block
             // of data has to be transposed
             const int4 globalPosA = get_index(offsetA, (col_A << TILEY_SHIFT), row_A, nr_rows_A, normal_seq);
-            const int4 maskIdx = globalPosA >> 1;
-            const int4 nibble = globalPosA & 1;
-	    uchar4 mask;
+	    uchar4 mask = (uchar4) (0xFF);
+	    const int4 nibble = globalPosA & 1;	    
 	    if(maskA) {
+              const int4 maskIdx = (globalPosA >> 1)*(col_C << TILEY_SHIFT);
 	      mask = (uchar4) (maskA[maskIdx.x], maskA[maskIdx.y], maskA[maskIdx.z], maskA[maskIdx.w]);
-	    } else {
-	      mask = (uchar4) (0xFF);
 	    }
             // first of all we load the block to private memory
             float4 v1 = masked_value(matrixA[globalPosA.x], mask.x, nibble.x);
@@ -198,13 +193,11 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
 
             if(!BInColMajorOrder) {
               const int4 globalPosB = get_index(offsetB, (row_B << TILEY_SHIFT) + j, col_B, nr_cols_B, normal_seq);
-              const int4 maskIdx = globalPosB >> 1;
+  	      uchar4 mask = (uchar4) (0xFF);
    	      const int4 nibble = globalPosB & 1;
-  	      uchar4 mask;
 	      if(maskB) {
+                const int4 maskIdx = (globalPosB >> 1)*(row_C << TILEY_SHIFT);
 	        mask = (uchar4) (maskB[maskIdx.x], maskB[maskIdx.y], maskB[maskIdx.z], maskB[maskIdx.w]);
-	      } else {
-	        mask = (uchar4) (0xFF);
 	      }
               tempB0 = masked_value(matrixB[globalPosB.x], mask.x, nibble.x);
               tempB1 = masked_value(matrixB[globalPosB.y], mask.y, nibble.y);
@@ -212,13 +205,11 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
               tempB3 = masked_value(matrixB[globalPosB.w], mask.w, nibble.w);
             } else {
               const int4 globalPosB = get_index(offsetB, (col_B << TILEY_SHIFT), row_B + (j >> 2), nr_rows_B, normal_seq);
-              const int4 maskIdx = globalPosB >> 1;
+	      uchar4 mask = (uchar4) (0xFF);
    	      const int4 nibble = globalPosB & 1;
-	      uchar4 mask;
 	      if(maskB) {
+                const int4 maskIdx = (globalPosB >> 1)*(row_C << TILEY_SHIFT);
 	        mask = (uchar4) (maskB[maskIdx.x], maskB[maskIdx.y], maskB[maskIdx.z], maskB[maskIdx.w]);
-	      } else {
-	        mask = (uchar4) (0xFF);
 	      }
 
               // load block in private memory
@@ -261,14 +252,15 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
     // If bias not NULL
     if(bias != NULL) {
         const int idx = offsetBias + gid0;
-	const int maskIdx = idx >> 1;
-	const int nibble = idx & 1;
         float4 bias_val = bias[idx];
-	const uchar mask = maskBias[maskIdx];
         
-        if (maskBias)
+        if (maskBias) 
+        {
+ 	  const int maskIdx = (idx >> 1)*(row_C << TILEY_SHIFT);  // bias only used in feed-forward
+	  const int nibble = idx & 1;
+	  const uchar mask = maskBias[maskIdx];
 	  bias_val = masked_value(bias_val, mask, nibble);
-            
+        }    
         sum0 += bias_val;
         sum1 += bias_val;
         sum2 += bias_val;
@@ -291,15 +283,6 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
     }
     // end of calculation of sigmoid function
 
-    const int4 maskIdx = globalPos >> 1;
-    const int4 nibble = globalPos & 1;
-    uchar4 mask;
-    if(maskC) {
-      mask = (uchar4) (maskC[maskIdx.x], maskC[maskIdx.y], maskC[maskIdx.z], maskC[maskIdx.w]);
-    } else {
-      mask = (uchar4) (0xFF);
-    }
-
     /* Write 16 values to matrixC */
     if(sumToMatrixC) {
         const float4 a = matrixC[globalPos.x] * multPrevVal;
@@ -307,15 +290,15 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         const float4 c = matrixC[globalPos.z] * multPrevVal;
         const float4 d = matrixC[globalPos.w] * multPrevVal;  
 
-        matrixC[globalPos.x] =  masked_value(a + multSum*sum0, mask.x, nibble.x);
-        matrixC[globalPos.y] =  masked_value(b + multSum*sum1, mask.y, nibble.y);
-        matrixC[globalPos.z] =  masked_value(c + multSum*sum2, mask.z, nibble.z);
-        matrixC[globalPos.w] =  masked_value(d + multSum*sum3, mask.w, nibble.w);    
+        matrixC[globalPos.x] =  a + multSum*sum0;
+        matrixC[globalPos.y] =  b + multSum*sum1;
+        matrixC[globalPos.z] =  c + multSum*sum2;
+        matrixC[globalPos.w] =  d + multSum*sum3;    
     } else {
-       matrixC[globalPos.x] =  masked_value(sum0, mask.x, nibble.x);
-       matrixC[globalPos.y] =  masked_value(sum1, mask.y, nibble.y);
-       matrixC[globalPos.z] =  masked_value(sum2, mask.z, nibble.z);
-       matrixC[globalPos.w] =  masked_value(sum3, mask.w, nibble.w);
+       matrixC[globalPos.x] = sum0;
+       matrixC[globalPos.y] = sum1;
+       matrixC[globalPos.z] = sum2;
+       matrixC[globalPos.w] = sum3;
     }
 }
 

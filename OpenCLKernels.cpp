@@ -160,7 +160,7 @@ void OpenCLKernels::
     matrixMultiplicationSigmoidKernel->
         setArg(3, (bias == nullptr)?cl::Buffer(0):*(bias->data.deviceData));
     matrixMultiplicationSigmoidKernel->
-        setArg(4, A.cols);
+        setArg(4, A.cols/4);
     matrixMultiplicationSigmoidKernel->
         setArg(5, A.offset/4);
     matrixMultiplicationSigmoidKernel->
@@ -190,9 +190,7 @@ void OpenCLKernels::
     matrixMultiplicationSigmoidKernel->
         setArg(18, (B.mask == nullptr)?cl::Buffer(0):*(B.mask->deviceData));
     matrixMultiplicationSigmoidKernel->
-        setArg(19, (C.mask == nullptr)?cl::Buffer(0):*(C.mask->deviceData));
-    matrixMultiplicationSigmoidKernel->
-        setArg(20, (bias == nullptr || bias->mask == nullptr)?cl::Buffer(0):*(bias->mask->deviceData)); 
+        setArg(19, (bias == nullptr || bias->mask == nullptr)?cl::Buffer(0):*(bias->mask->deviceData)); 
     
     // -----------------------------------------------------------------------
     // Define ndrange iteration space: global and local sizes based on

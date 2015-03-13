@@ -188,14 +188,14 @@ void nn::allocate_NN_memory_on_host() {
     // we do it multiple of 8 bytes because the random kernel generates
     // blocks of 8 bytes
     // mwfs: mask weight final size
-    const size_t mwfs = mwrs%8?(mwrs/8 + 1)*8:mwrs;
+    const size_t mwfs = (mwrs%8?(mwrs/8 + 1)*8:mwrs)*minibatchSize;
     mask_weights.hostData.resize(mwfs);
     s0.hostData.resize(mwfs);
     s1.hostData.resize(mwfs);
     
     // for bias
-    const size_t mwrsb = (numberOfNeurons - elementsPerLayer[0])/8;
-    const size_t mwfsb = mwrsb%8?(mwrsb/8 + 1)*8:mwrsb;
+    const size_t mwrsb = ((numberOfNeurons - elementsPerLayer[0])/8);
+    const size_t mwfsb = (mwrsb%8?(mwrsb/8 + 1)*8:mwrsb)*minibatchSize;
     mask_bias.hostData.resize(mwfsb);
 }
 
@@ -462,7 +462,7 @@ void nn::WA() {
         wei.set(elementsPerLayer[i], elementsPerLayer[i+1],
                 weights_offsets[i]);
         wei_inc.set(elementsPerLayer[i], elementsPerLayer[i+1],
-                    weights_offsets[i], false, &mask_weights);
+                    weights_offsets[i]);
         bias_val.set(1, elementsPerLayer[i+1], bias_offsets[i]);    //PENDING UPDATE WITH MASK!!!
 
         const bool sum = true;
