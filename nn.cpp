@@ -562,6 +562,11 @@ void nn::print_results_data(
     const cl_float training_percentage = percentage_classification_results_train();
     const cl_float test_percentage = percentage_classification_results_test();
     
+//    if(test_percentage > 96) {
+//        save_NN("neural-96.nn");
+//        exit(0);
+//    }
+    
     // if(test_percentage > 70) learningRate = 0.01;
     
     std::cout << std::fixed << std::setprecision(6)

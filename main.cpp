@@ -21,10 +21,10 @@ int main(int argc, char** argv) {
     
     nn nn1;
     
-    // cli CLI(nn1);
+    cli CLI(nn1);
     
     // load nn structure
-    std::vector<cl_uint> neuralnet = {784, 1024, 1024, 16};
+    std::vector<cl_uint> neuralnet = {784, 784, 784, 16};
     nn1.load_NN(neuralnet);
     
     // load training and test data
@@ -38,11 +38,10 @@ int main(int argc, char** argv) {
     
     nn1.init_training();
     //nn1.test_matrix_multiplication();
-    // CLI.loop();
+    CLI.loop();
     
-    nn1.train();
-    
-    nn1.save_NN("neural.nn");
+    //nn1.train();
+    //nn1.save_NN("neural.nn");
     
     return 0;
 }
