@@ -6,6 +6,15 @@
 
 #define NULL 0
 
+#define SIGMOID 1
+#define TANH 2
+#define RELU 3
+// Max-norm limit value for ReLU Activation Function
+// Typical values between 3-4. Disable MAX_NORM fixing it to high value
+#define RELU_MAX_NORM	4.0f	
+
+#define ACTIVATION_FUNCTION SIGMOID
+
 __constant float4 zeros = (float4) (0.0f);
 __constant float4 ones = (float4) (1.0f);
 __constant float4 epsilon = (float4) (1E-30);
@@ -28,16 +37,32 @@ int4 get_index(int offset, int r, int c, int nr_c, int4 r_sequence)
     return result;
 }
 
-float4 sigmoid(float4 x)
+float4 activation_function(float4 x)
 {
-    return ones / ( ones + exp( -x ) ); 
+#if ACTIVATION_FUNCTION == SIGMOID
+    return ones / ( ones + exp( -x ) );
+#elif ACTIVATION_FUNCTION == TANH
+	const float4 eplus = exp(x);
+	const float4 eminus = exp(-x);
+	return (eplus - eminus) / (eplus + eminus);
+#elif ACTIVATION_FUNCTION == RELU
+	x = (x > RELU_MAX_NORM)?RELU_MAX_NORM:x;
+	return (x > zeros)?x:zeros;
+#endif	
 }
 
 
-// softmax has the same derivative. that's why the same function is valid for it
-float4 sigmoid_derivative(float4 sigmoid)
+// Softmax has the same derivative than sigmoid. Be sure that is well implemented
+// When using a different activation funtion!!!!!!!!!!!! Not yet checked!!
+float4 activation_function_derivative(float4 val)
 {
-  return sigmoid*(ones - sigmoid);
+#if ACTIVATION_FUNCTION == SIGMOID
+    return val*(ones - val);
+#elif ACTIVATION_FUNCTION == TANH
+	return ones - val*val;
+#elif ACTIVATION_FUNCTION == RELU
+	return (x > zeros)?ones:zeros;
+#endif	
 }
 
 float4 cross_entropy(float4 t, float4 y)
@@ -249,22 +274,35 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         barrier(CLK_LOCAL_MEM_FENCE);
     }
     
-    // If bias not NULL
-    if(bias != NULL) {
+	// If bias not NULL
+    if(bias != NULL) 
+	{
         const int idx = offsetBias + gid0;
+		const int nibble = idx & 1;	// The nibble is the same for all biases because the number of neurons
+									// is multiple of 8
         float4 bias_val = bias[idx];
-        
-        if (maskBias) 
+        const uchar4 mask = (uchar4) (0xFF);
+        if (maskBias)
         {
- 	  const int maskIdx = (idx >> 1)*(row_C << TILEY_SHIFT);  // bias only used in feed-forward
-	  const int nibble = idx & 1;
-	  const uchar mask = maskBias[maskIdx];
-	  bias_val = masked_value(bias_val, mask, nibble);
+			const int row_C_tiley = (row_C << TILEY_SHIFT);
+			const int idxdiv2 = (idx >> 1);
+			const int4 maskIdx = (
+									idxdiv2*(row_C_tiley + 0),  // bias only used in feed-forward
+									idxdiv2*(row_C_tiley + 1),
+									idxdiv2*(row_C_tiley + 2),
+									idxdiv2*(row_C_tiley + 3)
+								 );
+			const uchar4 mask = (uchar4) (
+										  maskBias[maskIdx.x],
+									      maskBias[maskIdx.y],
+										  maskBias[maskIdx.z],
+										  maskBias[maskIdx.w]
+										 );
         }    
-        sum0 += bias_val;
-        sum1 += bias_val;
-        sum2 += bias_val;
-        sum3 += bias_val;
+        sum0 += masked_value(bias_val, mask.x, nibble);
+        sum1 += masked_value(bias_val, mask.y, nibble);
+        sum2 += masked_value(bias_val, mask.z, nibble);
+        sum3 += masked_value(bias_val, mask.w, nibble);
     }
 
     // Calculate the sigmoid function of the sum
@@ -276,10 +314,10 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
             sum3 *= 0.5f;
         }
 
-        sum0 = sigmoid(sum0);
-        sum1 = sigmoid(sum1);
-        sum2 = sigmoid(sum2);
-        sum3 = sigmoid(sum3);
+        sum0 = activation_function(sum0);
+        sum1 = activation_function(sum1);
+        sum2 = activation_function(sum2);
+        sum3 = activation_function(sum3);
     }
     // end of calculation of sigmoid function
 
@@ -354,7 +392,7 @@ __kernel void elementWiseMultiplicationBySigmoidDerivativeKernel(
 {
     int i = get_global_id(0);
 
-    float4 a = sigmoid_derivative(act[offset_act + i]);
+    float4 a = activation_function_derivative(act[offset_act + i]);
     
     del[offset_del + i] *= a;
 }
