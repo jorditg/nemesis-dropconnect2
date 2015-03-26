@@ -57,6 +57,12 @@ class OpenCLKernels {
             cl_float mult_a = 1.0f,
             cl_float mult_b = 1.0f);
     
+    void runElementWiseMult(
+            matrix_cl_float const &a,
+            matrix_cl_float const &b,
+            matrix_cl_float &c,
+            cl_float sum_a = 0.0f,
+            cl_float sum_b = 0.0f);
     
     cl_float runCrossEntropy(
             matrix_cl_float const &t,
@@ -115,6 +121,10 @@ class OpenCLKernels {
     cl::Kernel *elementWiseSumKernel;
     const std::string elementWiseSumKernel_name =
                       "elementWiseSumKernel";
+    
+    cl::Kernel *elementWiseMultKernel;
+    const std::string elementWiseMultKernel_name =
+                      "elementWiseMultKernel";
     
     cl::Kernel *crossEntropyKernelLocal;
     const std::string crossEntropyKernelLocal_name =

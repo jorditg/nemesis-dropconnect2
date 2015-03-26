@@ -11,9 +11,9 @@
 #define RELU 3
 // Max-norm limit value for ReLU Activation Function
 // Typical values between 3-4. Disable MAX_NORM fixing it to high value
-#define RELU_MAX_NORM	4.0f	
+//#define RELU_MAX_NORM	((float4) (3.0f))	
 
-#define ACTIVATION_FUNCTION SIGMOID
+#define ACTIVATION_FUNCTION RELU
 
 __constant float4 zeros = (float4) (0.0f);
 __constant float4 ones = (float4) (1.0f);
@@ -42,32 +42,40 @@ float4 activation_function(float4 x)
 #if ACTIVATION_FUNCTION == SIGMOID
     return ones / ( ones + exp( -x ) );
 #elif ACTIVATION_FUNCTION == TANH
-	const float4 eplus = exp(x);
-	const float4 eminus = exp(-x);
-	return (eplus - eminus) / (eplus + eminus);
+    const float4 eplus = exp(x);
+    const float4 eminus = exp(-x);
+    return (eplus - eminus) / (eplus + eminus);
 #elif ACTIVATION_FUNCTION == RELU
-	x = (x > RELU_MAX_NORM)?RELU_MAX_NORM:x;
-	return (x > zeros)?x:zeros;
+    #ifdef RELU_MAX_NORM
+    x = (x > RELU_MAX_NORM)?RELU_MAX_NORM:x;
+    #endif
+    return (x > zeros)?x:zeros;
 #endif	
 }
 
 
-// Softmax has the same derivative than sigmoid. Be sure that is well implemented
-// When using a different activation funtion!!!!!!!!!!!! Not yet checked!!
 float4 activation_function_derivative(float4 val)
 {
 #if ACTIVATION_FUNCTION == SIGMOID
     return val*(ones - val);
 #elif ACTIVATION_FUNCTION == TANH
-	return ones - val*val;
+    return ones - val*val;
 #elif ACTIVATION_FUNCTION == RELU
-	return (x > zeros)?ones:zeros;
+    #ifdef RELU_MAX_NORM
+    return (val > zeros && val < RELU_MAX_NORM)?ones:zeros;
+    #else
+    return (val > zeros)?ones:zeros;
+    #endif
 #endif	
 }
 
 float4 cross_entropy(float4 t, float4 y)
 {
-    return ( t * log(y + epsilon) + (ones - t) * log (ones - y + epsilon) );
+  // cross-entropy "traditional"
+  //return ( t * log(y + epsilon) + (ones - t) * log (ones - y + epsilon) );
+  
+  // log-likelihood "cross entropy"
+  return  t * log(y + epsilon);
 }
 
 float4 masked_value(float4 value, uchar byte_mask, int nibble)
@@ -284,20 +292,20 @@ __kernel void matrixMultiplicationSigmoidKernelLocal
         const uchar4 mask = (uchar4) (0xFF);
         if (maskBias)
         {
-			const int row_C_tiley = (row_C << TILEY_SHIFT);
-			const int idxdiv2 = (idx >> 1);
-			const int4 maskIdx = (
-									idxdiv2*(row_C_tiley + 0),  // bias only used in feed-forward
-									idxdiv2*(row_C_tiley + 1),
-									idxdiv2*(row_C_tiley + 2),
-									idxdiv2*(row_C_tiley + 3)
-								 );
-			const uchar4 mask = (uchar4) (
-										  maskBias[maskIdx.x],
-									      maskBias[maskIdx.y],
-										  maskBias[maskIdx.z],
-										  maskBias[maskIdx.w]
-										 );
+            const int row_C_tiley = (row_C << TILEY_SHIFT);
+            const int idxdiv2 = (idx >> 1);
+            const int4 maskIdx = (
+                                  idxdiv2*(row_C_tiley + 0),  // bias only used in feed-forward
+                                  idxdiv2*(row_C_tiley + 1),
+                                  idxdiv2*(row_C_tiley + 2),
+                                  idxdiv2*(row_C_tiley + 3)
+                                 );
+            const uchar4 mask = (uchar4) (
+                                  maskBias[maskIdx.x],
+                                  maskBias[maskIdx.y],
+                                  maskBias[maskIdx.z],
+                                  maskBias[maskIdx.w]
+                                 );
         }    
         sum0 += masked_value(bias_val, mask.x, nibble);
         sum1 += masked_value(bias_val, mask.y, nibble);
@@ -380,6 +388,31 @@ __kernel void elementWiseSumKernel(__global float4* A,
     const float4 b = mult_B*B[offset_B + i];
        
     R[offset_R + i] =  a + b;
+
+}
+
+/*
+ * Implements the function R = (A+a).*(B+b)
+ * Where A and B are vectors and a and b are scalars. All the operations
+ * involved are elementwise operations 
+ */
+
+__kernel void elementWiseMultKernel(__global float4* A,
+                                    __global float4* B,
+                                    __global float4* R,
+                                    int offset_A,
+                                    int offset_B,
+                                    int offset_R,
+                                    float a,
+                                    float b)
+{
+    
+    const int i = get_global_id(0);
+    
+    const float4 v1 = A[offset_A + i] + (float4) (a);
+    const float4 v2 = B[offset_B + i] + (float4) (b);
+       
+    R[offset_R + i] =  v1 * v2;
 
 }
 

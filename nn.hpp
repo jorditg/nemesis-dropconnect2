@@ -35,7 +35,7 @@ class nn {
     bool enableMomentumRule = false;
     // enableNAG true uses Nesterov-accelerated gradient.
     // enableNAG false uses Classical Momentum
-    bool enableNAG = true;
+    bool enableNAG = false;
  
     bool enableL2Regularization = false;
     
@@ -43,14 +43,14 @@ class nn {
     cl_float ce = 0.0;
     cl_float ce_test = 0.0;
     
-    cl_uint minibatchSize = 256;
+    cl_uint minibatchSize = 128;
     cl_float learningRate = 0.1f;  // Typìcal value 0.3
     cl_float momentum = 0.9f;      // Typical value 0.9
     size_t maxEpochs = 100000;      // Typical value 5000000
     cl_float minError = 0.001f;     // Typical value 0.01
-    cl_float lambda = 10.0f;     // L2 reg. param. (0, 1 , 10, etc.)
+    cl_float lambda = 1.0f;     // L2 reg. param. (0, 1 , 10, etc.)
     
-    size_t printEpochs = 250;      // Typical value 1000
+    size_t printEpochs = 100;      // Typical value 1000
     
     std::vector<cl_uint> elementsPerLayer;
     
@@ -136,6 +136,8 @@ class nn {
                              std::log2(t / 250.0f + 1.0f));
         momentum = std::min(momentum_max, new_momentum);
     }
+    
+    void update_lr_rule_Dropconnect2013(cl_uint t);
 
     void print_results_data_header_with_L2_regularization();
     void print_results_data_with_L2_regularization(

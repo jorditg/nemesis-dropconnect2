@@ -412,9 +412,8 @@ void nn::BP() {
     del_r.set(minibatchSize,
               elementsPerLayer[last],
               deltas_offsets[last]);
-
-    openclKernels->runElementWiseSubstract(act, tm, del_r);
     
+    openclKernels->runElementWiseSubstract(act, tm, del_r); // cross entropy deltas function
     
     // next calculate deltas for next layers
     // delta {previous layer} = delta {next_layer} * weights * activation_function_derivative
@@ -463,7 +462,7 @@ void nn::WA() {
                 weights_offsets[i]);
         wei_inc.set(elementsPerLayer[i], elementsPerLayer[i+1],
                     weights_offsets[i]);
-        bias_val.set(1, elementsPerLayer[i+1], bias_offsets[i]);    //PENDING UPDATE WITH MASK!!!
+        bias_val.set(1, elementsPerLayer[i+1], bias_offsets[i]);
 
         const bool sum = true;
         const cl_float learningRateOverMinibatchSize =
@@ -490,7 +489,8 @@ void nn::WA() {
     if (enableL2Regularization)  // if L2-regularization
         openclKernels->runElementWiseSum(wei_inc, wei, wei_inc,
                      1.0f, - learningRate*lambda/numberOfTrainingData);
-    openclKernels->runElementWiseSum(wei, wei_inc, wei);
+    else    // I added else because I think it was missing, but not sure for L2-reg functioning
+        openclKernels->runElementWiseSum(wei, wei_inc, wei);
 }
 
 
@@ -522,6 +522,29 @@ void nn::NAG_postupdate() {
                             wei,
                             1.0f,
                             -momentum);
+}
+
+void nn::update_lr_rule_Dropconnect2013(cl_uint t) {
+    const cl_float reference_momentum = 0.9;
+    const cl_float reference_lr = 0.1;
+    if(t == 1) {
+        momentum = reference_momentum;
+        learningRate = reference_lr;
+    } else if(t == 600) {
+        learningRate = 0.5f*reference_lr;
+    } else if(t == 1000) {
+        learningRate = 0.1f*reference_lr;
+    } else if(t == 1400) {
+        learningRate = 0.05f*reference_lr;
+    } else if(t == 1600) {
+        learningRate = 0.01f*reference_lr;
+    } else if(t == 1800) {
+        learningRate = 0.005f*reference_lr;
+    } else if(t == 2000) {
+        learningRate = 0.001f*reference_lr;
+    } else if(t == 2200) {
+        stopTraining = true;
+    }
 }
 
 void nn::print_results_data_header_with_L2_regularization() {
@@ -636,6 +659,8 @@ void nn::train() {
         if (enableMomentumRule) {
             update_momentum_rule_Hinton2013(epoch);
         }
+        
+        update_lr_rule_Dropconnect2013(epoch);
         
         // wait for minibatch thread to finish
         fut.get();

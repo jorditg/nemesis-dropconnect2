@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
         test_file,
         test_labels_file);
     
-    nn1.populate_normal_random_weights();
+    nn1.populate_normal_random_weights(0.0f, 0.01f);
     
     nn1.init_training();
     //nn1.test_matrix_multiplication();

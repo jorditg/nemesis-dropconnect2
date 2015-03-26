@@ -18,6 +18,7 @@ OpenCLKernels::~OpenCLKernels() {
     delete matrixScalarMultiplicationKernel;
     delete rowSumKernel;
     delete softmaxKernelLocal;
+    delete elementWiseMultKernel;
     delete elementWiseMultiplicationBySigmoidDerivativeKernel;
     delete crossEntropyKernelLocal;
     delete level2RegularizationKernelLocal;
@@ -67,7 +68,11 @@ void OpenCLKernels::opencl_init() {
       elementWiseSumKernel =
             new cl::Kernel(*program,
                            elementWiseSumKernel_name.c_str());
-            
+      
+      elementWiseMultKernel = 
+            new cl::Kernel(*program,
+                           elementWiseMultKernel_name.c_str());
+
       crossEntropyKernelLocal =
             new cl::Kernel(*program,
                            crossEntropyKernelLocal_name.c_str());
@@ -271,6 +276,42 @@ void OpenCLKernels::runElementWiseSum(
     const cl::NDRange global(global_size[0]);
     // const cl::NDRange local(local_size[0]);
     queue.enqueueNDRangeKernel(*elementWiseSumKernel,
+                               offset,
+                               global /*, local*/);
+    queue.finish();
+}
+
+void OpenCLKernels::runElementWiseMult(
+            matrix_cl_float const &a,
+            matrix_cl_float const &b,
+            matrix_cl_float &c,
+            cl_float sum_a,
+            cl_float sum_b) {
+
+    assert(a.cols == b.cols && a.rows == b.rows &&
+           a.cols == c.cols && a.rows == c.rows);
+    
+    // const size_t blockSize = 512;  // float4's
+    const size_t data_size_float4_global = b.rows*b.cols/4;
+    
+    size_t global_size[1] = {data_size_float4_global};
+    // size_t local_size[1] = {boost::math::gcd(blockSize, global_size[0])};
+    
+    // assert(global_size[0] % local_size[0] == 0);
+
+    elementWiseMultKernel->setArg(0, *(a.data.deviceData));
+    elementWiseMultKernel->setArg(1, *(b.data.deviceData));
+    elementWiseMultKernel->setArg(2, *(c.data.deviceData));
+    elementWiseMultKernel->setArg(3, a.offset/4);
+    elementWiseMultKernel->setArg(4, b.offset/4);
+    elementWiseMultKernel->setArg(5, c.offset/4);
+    elementWiseMultKernel->setArg(6, sum_a);
+    elementWiseMultKernel->setArg(7, sum_b);
+    
+    const cl::NDRange offset = cl::NullRange;
+    const cl::NDRange global(global_size[0]);
+    // const cl::NDRange local(local_size[0]);
+    queue.enqueueNDRangeKernel(*elementWiseMultKernel,
                                offset,
                                global /*, local*/);
     queue.finish();
