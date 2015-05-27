@@ -528,18 +528,26 @@ __kernel void softmaxKernelLocal(__global float4* z,
     
     unsigned int idx = offset_z + gid;
     
-    sdata[lid] = exp(z[idx]);
+    sdata[lid] = z[idx];
     barrier(CLK_LOCAL_MEM_FENCE);
     
-    // calculate the sum of all the elements
+    // calculate the max value of all the elements
+    float4 maxval = (float4) (-9E20);
+    for(int i = 0; i < localSize; i++) {
+        maxval = max(maxval, sdata[i]);
+    }
+    const float2 maxv2 = max((float2) (maxval.x, maxval.y), (float2) (maxval.z, maxval.w));
+    const float maxv = max(maxv2.x, maxv2.y);
+    
     float4 sum = (float4) (0.0f);
     for(int i = 0; i < localSize; i++) {
-        sum += sdata[i];
-    }
+        sum += exp(sdata[i] - maxv);
+    }    
     
     float total = sum.x + sum.y + sum.z + sum.w;
     
-    z[idx] = sdata[lid]/total;
+    
+    z[idx] = exp(sdata[lid] - maxv)/total;
 }
 
 /* 

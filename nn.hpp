@@ -35,7 +35,7 @@ class nn {
     bool enableMomentumRule = false;
     // enableNAG true uses Nesterov-accelerated gradient.
     // enableNAG false uses Classical Momentum
-    bool enableNAG = false;
+    bool enableNAG = true;
  
     bool enableL2Regularization = false;
     
